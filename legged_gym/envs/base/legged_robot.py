@@ -47,6 +47,7 @@ from legged_gym.utils.terrain import Terrain
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
+import time
 
 class LeggedRobot(BaseTask):
     def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
@@ -127,7 +128,7 @@ class LeggedRobot(BaseTask):
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
         self.compute_observations() # in some cases a simulation step might be required to refresh some obs (for example body positions)
-
+        self.compute_privileged_observations()
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
@@ -225,6 +226,78 @@ class LeggedRobot(BaseTask):
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
 
+    def compute_privileged_observations(self):
+        """ Computes privileged observations
+        """
+        # robot_dof_acc = self.last_dof_vel - self.dof_vel
+        robot_heights = self._get_heights()
+        self.feet_contact_forces = self._get_feet_contact_forces()
+        feet_contact_states = self._get_feet_contact_states()
+        self.privileged_obs_buf = torch.cat((
+            # self.terrain_normals,  # 12
+            robot_heights.to(device=self.device),
+            self.feet_contact_forces.to(device=self.device),
+            feet_contact_states.to(device=self.device),
+            # thigh_contact_states.to(device=self.device),
+            # shank_contact_states.to(device=self.device),
+            self.friction_coeffs.view(self.num_envs, 1).to(device=self.device),  # 1
+            # self.rand_push_force.to(device=self.device),  # 3
+            # self.rand_push_torque,  # 3
+        ), dim=-1) 
+        """v2
+        """
+        # foot_pos = self.pos
+        # self.privileged_obs_buf = torch.cat((
+        #     # self.terrain_normals,  # 12
+        #     robot_dof_acc.to(device=self.device),   # 12
+        #     robot_heights.to(device=self.device),
+        #     self.feet_contact_forces.to(device=self.device),
+        #     feet_contact_states.to(device=self.device),
+        #     # thigh_contact_states.to(device=self.device),
+        #     # shank_contact_states.to(device=self.device),
+        #     self.friction_coeffs.view(self.num_envs, 1).to(device=self.device),  # 1
+        #     # self.rand_push_force.to(device=self.device),  # 3
+        #     # self.rand_push_torque,  # 3
+        # ), dim=-1)
+
+    def _get_terrain_normals(self):
+        pass
+
+    def _get_thigh_contact_states(self):
+        thigh_contact_forces = self._get_thigh_contact_forces()
+        one = torch.ones_like(thigh_contact_forces)
+        zero = torch.zeros_like(thigh_contact_forces)
+        thigh_contact_states = torch.where(thigh_contact_forces!=0, one, zero)
+        return thigh_contact_states
+    
+    def _get_shank_contact_states(self):
+        shank_contact_forces = self._get_shank_contact_forces()
+        print("shank", shank_contact_forces)
+
+        one = torch.ones_like(shank_contact_forces)
+        zero = torch.zeros_like(shank_contact_forces)
+        shank_contact_states = torch.where(shank_contact_forces!=0, one, zero)
+        return shank_contact_states 
+    
+    def _get_feet_contact_states(self):
+        one = torch.ones_like(self.feet_contact_forces)
+        zero = torch.zeros_like(self.feet_contact_forces)
+        feet_contact_states = torch.where(self.feet_contact_forces!=0, one, zero)
+        return feet_contact_states
+    
+    def _get_feet_contact_forces(self):
+        return torch.norm(self.contact_forces[:, self.feet_indices, :], dim=2)
+    
+    def _get_thigh_contact_forces(self):
+        return torch.norm(self.contact_forces[:, self.thigh_indices, :], dim=2)
+    
+    def _get_shank_contact_forces(self):
+        print("contact_forces", self.contact_forces)
+        return torch.norm(self.contact_forces[:, self.shank_indices, :], dim=2)
+
+    def _get_envs_friction(self):
+        return self.friction_coeffs
+
     def create_sim(self):
         """ Creates simulation, terrain and evironments
         """
@@ -298,10 +371,10 @@ class LeggedRobot(BaseTask):
                 self.dof_vel_limits[i] = props["velocity"][i].item()
                 self.torque_limits[i] = props["effort"][i].item()
                 # soft limits
-                m = (self.dof_pos_limits[i, 0] + self.dof_pos_limits[i, 1]) / 2
-                r = self.dof_pos_limits[i, 1] - self.dof_pos_limits[i, 0]
-                self.dof_pos_limits[i, 0] = m - 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
-                self.dof_pos_limits[i, 1] = m + 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
+                # m = (self.dof_pos_limits[i, 0] + self.dof_pos_limits[i, 1]) / 2
+                # r = self.dof_pos_limits[i, 1] - self.dof_pos_limits[i, 0]
+                # self.dof_pos_limits[i, 0] = m - 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
+                # self.dof_pos_limits[i, 1] = m + 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
         return props
 
     def _process_rigid_body_props(self, props, env_id):
@@ -497,6 +570,7 @@ class LeggedRobot(BaseTask):
         self.base_quat = self.root_states[:, 3:7]
 
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
+        # print(self.contact_forces)
 
         # initialize some data used later on
         self.common_step_counter = 0
@@ -518,10 +592,17 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-        if self.cfg.terrain.measure_heights:
-            self.height_points = self._init_height_points()
+        # if self.cfg.terrain.measure_heights:
+        self.height_points = self._init_height_points()
         self.measured_heights = 0
 
+
+        # joint positions offsets and PD gains
+        self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self.rand_push_force = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+        self.rand_push_torque = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+        self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
+        self.default_joint_pd_target = self.default_dof_pos.clone()
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         for i in range(self.num_dofs):
@@ -539,6 +620,10 @@ class LeggedRobot(BaseTask):
                 self.d_gains[i] = 0.
                 if self.cfg.control.control_type in ["P", "V"]:
                     print(f"PD gain of joint {name} were not defined, setting them to zero")
+
+        self.rand_push_force = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+        self.rand_push_torque = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
 
     def _prepare_reward_function(self):
@@ -647,10 +732,13 @@ class LeggedRobot(BaseTask):
 
         # save body names from the asset
         body_names = self.gym.get_asset_rigid_body_names(robot_asset)
+        # print(body_names)
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
         feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
+        thigh_names = [s for s in body_names if self.cfg.asset.thigh_name in s]
+        shank_names = [s for s in body_names if self.cfg.asset.shank_name in s]
         penalized_contact_names = []
         for name in self.cfg.asset.penalize_contacts_on:
             penalized_contact_names.extend([s for s in body_names if name in s])
@@ -668,6 +756,10 @@ class LeggedRobot(BaseTask):
         env_upper = gymapi.Vec3(0., 0., 0.)
         self.actor_handles = []
         self.envs = []
+
+        self.env_frictions = torch.zeros(self.num_envs, 4, dtype=torch.float32, device=self.device)
+
+
         for i in range(self.num_envs):
             # create env instance
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
@@ -686,9 +778,18 @@ class LeggedRobot(BaseTask):
             self.envs.append(env_handle)
             self.actor_handles.append(actor_handle)
 
+        # obtain the feet's, thigh's, shank's indices
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(feet_names)):
             self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], feet_names[i])
+
+        self.thigh_indices = torch.zeros(len(thigh_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(thigh_names)):
+            self.thigh_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], thigh_names[i])
+        
+        self.shank_indices = torch.zeros(len(shank_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(shank_names)):
+            self.shank_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], shank_names[i])
 
         self.penalised_contact_indices = torch.zeros(len(penalized_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(penalized_contact_names)):

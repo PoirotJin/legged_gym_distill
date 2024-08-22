@@ -9,7 +9,7 @@
 #
 # 2. Redistributions in binary form must reproduce the above copyright notice,
 # this list of conditions and the following disclaimer in the documentation
-# and/or other materials provided with the distribution.
+# and/or other materials provided with the distribution. 
 #
 # 3. Neither the name of the copyright holder nor the names of its
 # contributors may be used to endorse or promote products derived from
@@ -32,9 +32,12 @@ from .base_config import BaseConfig
 
 class LeggedRobotCfg(BaseConfig):
     class env:
-        num_envs = 4096
-        num_observations = 235
-        num_privileged_obs = None # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
+        # num_envs = 4096
+        num_envs = 16
+        # num_observations = 235
+        num_observations = 48
+        num_privileged_obs = 57 # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
+        # num_privileged_obs = None
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
         send_timeouts = True # send time out information to the algorithm
@@ -50,9 +53,11 @@ class LeggedRobotCfg(BaseConfig):
         dynamic_friction = 1.0
         restitution = 0.
         # rough terrain only:
-        measure_heights = True
-        measured_points_x = [-0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8] # 1mx1.6m rectangle (without center line)
-        measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
+        measure_heights = False
+        # measured_points_x = [-0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8] # 1mx1.6m rectangle (without center line)
+        measured_points_x = [-0.8, -0.6, -0.4, -0.2, 0.2, 0.4, 0.6, 0.8] # 1mx1.6m rectangle (without center line)
+        # measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
+        measured_points_y = [-0.5, -0.3, -0.1, 0.1, 0.3, 0.5]
         selected = False # select a unique terrain type and pass all arguments
         terrain_kwargs = None # Dict of arguments for selected terrain
         max_init_terrain_level = 5 # starting curriculum state
@@ -100,6 +105,8 @@ class LeggedRobotCfg(BaseConfig):
         file = ""
         name = "legged_robot"  # actor name
         foot_name = "None" # name of the feet bodies, used to index body state and contact force tensors
+        thigh_name = "None"
+        shank_name = "None"
         penalize_contacts_on = []
         terminate_after_contacts_on = []
         disable_gravity = False
@@ -172,6 +179,7 @@ class LeggedRobotCfg(BaseConfig):
             lin_vel = 0.1
             ang_vel = 0.2
             gravity = 0.05
+            quat = 0.03
             height_measurements = 0.1
 
     # viewer camera:
@@ -201,7 +209,8 @@ class LeggedRobotCfg(BaseConfig):
 
 class LeggedRobotCfgPPO(BaseConfig):
     seed = 1
-    runner_class_name = 'OnPolicyRunner'
+    # runner_class_name = 'OnPolicyRunner'
+    runner_class_name = 'OnPolicyRunnerTeacher'
     class policy:
         init_noise_std = 1.0
         actor_hidden_dims = [512, 256, 128]
@@ -228,10 +237,12 @@ class LeggedRobotCfgPPO(BaseConfig):
         max_grad_norm = 1.
 
     class runner:
-        policy_class_name = 'ActorCritic'
-        algorithm_class_name = 'PPO'
+        policy_class_name = 'ActorCriticTeacher'
+        algorithm_class_name = 'PPO_teacher'
+        # policy_class_name = 'ActorCritic'
+        # algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
-        max_iterations = 1500 # number of policy updates
+        max_iterations = 300 # number of policy updates
 
         # logging
         save_interval = 50 # check for potential saves every this many iterations

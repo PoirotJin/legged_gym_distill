@@ -64,6 +64,8 @@ class A1RoughCfg( LeggedRobotCfg ):
         file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/a1/urdf/a1.urdf'
         name = "a1"
         foot_name = "foot"
+        thigh_name = "thigh"
+        shank_name = "calf"
         penalize_contacts_on = ["thigh", "calf"]
         terminate_after_contacts_on = ["base"]
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
